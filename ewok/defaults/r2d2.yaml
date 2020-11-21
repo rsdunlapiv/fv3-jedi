@@ -1,0 +1,12 @@
+'an': 
+  - file_type: ['fv_core.res', 'fv_srf_wnd.res', 'fv_tracer.res', 'sfc_data' ]
+    tile: [1, 2, 3, 4, 5, 6]
+  - model: fv3jedi_metadata
+    target_file: $(current_dir)/coupler.res
+'fc':
+  - file_type: ['fv_core.res', 'fv_tracer.res']
+    tile: [1, 2, 3, 4, 5, 6]
+  - model: fv3jedi_metadata
+    source_file: $(current_dir)/coupler.res
+    step: 'PT00H'
+
