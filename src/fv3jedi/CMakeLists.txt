@@ -165,7 +165,8 @@ list( APPEND fv3jedi_geos_src_files
 
 # Source files when building with GFS
 list( APPEND fv3jedi_ufs_src_files
-  Geometry/fv_init_mod.f90
+  Geometry/fv_init_control_mod.f90
+#  Geometry/fv_init_mod.f90
   Model/gfs/fv3jedi_gfs_interface_mod.F90
   Model/gfs/fv3jedi_gfs_mod.f90
   Model/gfs/ModelGFS.cc
@@ -174,8 +175,14 @@ list( APPEND fv3jedi_ufs_src_files
 )
 
 # Source files when building with UFS
-#list( APPEND fv3jedi_ufs_src_files
-#)
+list( APPEND fv3jedi_ufs_src_files
+  Geometry/fv_init_control_mod.f90
+  Model/ufs/fv3jedi_ufs_interface_mod.F90
+  Model/ufs/fv3jedi_ufs_mod.F90
+  Model/ufs/ModelUFS.cc
+  Model/ufs/ModelUFS.h
+  Model/ufs/ModelUFS.interface.h
+)
 
 # Source files when building with UFS prototype
 list( APPEND fv3jedi_nuopc_src_files
@@ -226,3 +233,30 @@ ecbuild_add_library( TARGET          fv3jedi
                      INSTALL_HEADERS LISTED
                      LINKER_LANGUAGE ${FV3JEDI_LINKER_LANGUAGE}
                    )
+
+if( FV3_FORECAST_MODEL MATCHES "UFS" ) 
+  # ESMF
+  find_package(ESMF MODULE REQUIRED STATIC)
+  
+  # Link all the libraries
+  target_link_libraries( fv3jedi PUBLIC nemsio::nemsio)
+  target_link_libraries( fv3jedi PUBLIC w3emc::w3emc_d)
+  target_link_libraries( fv3jedi PUBLIC w3nco::w3nco_d)
+  target_link_libraries( fv3jedi PUBLIC sp::sp_d)
+  target_link_libraries( fv3jedi PUBLIC bacio::bacio_4)
+  target_link_libraries( fv3jedi PUBLIC cpl)
+  target_link_libraries( fv3jedi PUBLIC fms)
+  target_link_libraries( fv3jedi PUBLIC fv3atm)
+  target_link_libraries( fv3jedi PUBLIC cpl)
+  target_link_libraries( fv3jedi PUBLIC ccppdriver)
+  target_link_libraries( fv3jedi PUBLIC ufs)
+  target_link_libraries( fv3jedi PUBLIC gfsphysics)
+  target_link_libraries( fv3jedi PUBLIC io)
+  target_link_libraries( fv3jedi PUBLIC ipd)
+  target_link_libraries( fv3jedi PUBLIC stochastic_physics)
+  target_link_libraries( fv3jedi PUBLIC NetCDF::NetCDF_Fortran)
+  #target_link_libraries( fv3jedi PUBLIC upp)
+  #target_link_libraries( fv3jedi PUBLIC crtm)          
+  target_include_directories( fv3jedi PUBLIC ${ESMF_F90COMPILEPATHS} )
+  target_compile_definitions( fv3jedi PUBLIC "-DFRONT_FV3=fv3gfs_cap_mod")
+endif()

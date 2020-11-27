@@ -124,7 +124,22 @@ endif()
 
 # ufs
 if (FV3_FORECAST_MODEL MATCHES "UFS")
-  #ToDo
+  #set( CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -ffree-line-length-none -fdec -fno-range-check -ffree-form ")
+
+  # TODO: fms will be seperated from UFS at some point
+  # set CMAKE_PREFIX_PATH to include location of hpc-stack install and ufs install using
+  # semi-colon separated lists in quotes e.g.--
+  # ecbuild -DCMAKE_PREFIX_PATH="path-to/ufs-weather-model/build/install;/home/mpotts/hpc-stack/install" ...
+
+  find_package(bacio REQUIRED )
+  find_package(sigio REQUIRED )
+  find_package(sp REQUIRED )
+  find_package(w3emc REQUIRED )
+  find_package(w3nco REQUIRED )
+  find_package(nemsio REQUIRED )
+  find_package(fms REQUIRED )
+  find_package(fv3atm REQUIRED )
+  find_package(ufs REQUIRED )
 endif()
 
 # Linear model
