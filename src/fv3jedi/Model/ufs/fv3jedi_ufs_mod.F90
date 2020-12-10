@@ -33,7 +33,7 @@ module fv3jedi_ufs_mod
   !> Fortran derived type to hold model definition
   type :: model_ufs
      type(ESMF_GridComp) :: esmComp
-     type(ESMF_State) :: importState, exportState 
+     type(ESMF_State) :: toJedi, fromJedi 
      type(esmf_Clock) :: clock
    contains
      procedure :: create
@@ -140,7 +140,7 @@ contains
 
     ! hard code for testing
     cdate_start = "2019-08-29T03:00:00Z"
-    call SetTimeFromString(cdate_start, startTime, rc=rc)
+    call ESMF_TimeSet(startTime, timeString=cdate_start,rc=rc)
     if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
          line=__LINE__, file=__FILE__)) then
        call ESMF_Finalize(endflag=ESMF_END_ABORT)
@@ -149,7 +149,7 @@ contains
 
     ! hard code for testing
     cdate_stop = "2019-08-29T04:00:00Z"
-    call SetTimeFromString(cdate_stop, stopTime, rc=rc)
+    call ESMF_TimeSet(stopTime, timeString=cdate_stop, rc=rc)
     if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
          line=__LINE__, file=__FILE__)) then
        call ESMF_Finalize(endflag=ESMF_END_ABORT)
@@ -164,9 +164,12 @@ contains
        return
     endif
 
-    ! Create import and export states
+    ! Create import and export states from
+    ! perspective of the exernal system:
+    !   toJedi is an IMPORT into Jedi and an EXPORT from ESM
+    !   fromJedi is an EXPORT from Jedi and an IMPORT into ESM
 
-    self%importState = ESMF_StateCreate(stateintent=ESMF_STATEINTENT_IMPORT, &
+    self%toJedi = ESMF_StateCreate(stateintent=ESMF_STATEINTENT_IMPORT, &
          rc=rc)
     if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
          line=__LINE__, file=__FILE__)) then
@@ -174,7 +177,7 @@ contains
        return
     endif
     
-    self%exportState = ESMF_StateCreate(stateintent=ESMF_STATEINTENT_EXPORT, &
+    self%fromJedi = ESMF_StateCreate(stateintent=ESMF_STATEINTENT_EXPORT, &
          rc=rc)
     if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
          line=__LINE__, file=__FILE__)) then
@@ -204,18 +207,18 @@ contains
        return
     endif
    
-    call ESMF_LogWrite("About to destroy importState "//subname, ESMF_LOGMSG_INFO)
+    call ESMF_LogWrite("About to destroy toJedi state "//subname, ESMF_LOGMSG_INFO)
 
-    call ESMF_StateDestroy(self%importState, rc=rc)
+    call ESMF_StateDestroy(self%toJedi, rc=rc)
     if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
          line=__LINE__, file=__FILE__)) then
        call ESMF_Finalize(endflag=ESMF_END_ABORT)
        return
     endif
 
-    call ESMF_LogWrite("About to destroy exportState "//subname, ESMF_LOGMSG_INFO)
+    call ESMF_LogWrite("About to destroy fromJedi state "//subname, ESMF_LOGMSG_INFO)
 
-    call ESMF_StateDestroy(self%exportState, rc=rc)
+    call ESMF_StateDestroy(self%fromJedi, rc=rc)
     if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
          line=__LINE__, file=__FILE__)) then
        call ESMF_Finalize(endflag=ESMF_END_ABORT)
@@ -252,17 +255,20 @@ contains
     type(ESMF_CplComp),  pointer       :: connectors(:)
     character(len=128) :: name, msg
 
+    type(ESMF_Field),       pointer :: stateFieldList(:)
+
     character(len=*),parameter :: subname = modname//' (initialize)'
 
     call ESMF_LogWrite("Enter "//subname, ESMF_LOGMSG_INFO)
 
+
 #define ADVERTISE_EXPORTS
 #ifdef ADVERTISE_EXPORTS
-    
+   
     call ESMF_LogWrite("Advertising export from ESM", ESMF_LOGMSG_INFO)
     ! Advertise fields on the exportState, for data coming out of ESM component
-    call NUOPC_Advertise(self%exportState, &
-         StandardName="driver_export1", &
+    call NUOPC_Advertise(self%toJedi, &
+         StandardName="inst_zonal_wind_levels", &
          SharePolicyField="share", &
          TransferOfferGeomObject="cannot provide", rc=rc)
     if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
@@ -278,7 +284,7 @@ contains
     
     call ESMF_LogWrite("Advertising imports to ESM", ESMF_LOGMSG_INFO)
     ! Advertise fields on the importState, for data going into ESM component
-    call NUOPC_Advertise(self%importState, &
+    call NUOPC_Advertise(self%fromJedi, &
          StandardNames=(/ &
          "inst_down_lw_flx              ", &
          "inst_down_sw_flx              ", &
@@ -293,14 +299,14 @@ contains
     
 #endif
 
-    call ESMF_StateGet(self%exportState, itemCount=cnt, rc=rc)
+    call ESMF_StateGet(self%toJedi, itemCount=cnt, rc=rc)
     if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
          line=__LINE__, file=__FILE__)) then
        call ESMF_Finalize(endflag=ESMF_END_ABORT)
        return
     endif
     write(msg, "(I2)") cnt
-    call ESMF_LogWrite("After filling advertise export state has "//trim(msg)//" items.", &
+    call ESMF_LogWrite("After filling advertise toJedi state has "//trim(msg)//" items.", &
          ESMF_LOGMSG_INFO)
 
 
@@ -315,7 +321,7 @@ contains
     endif
     
     call ESMF_GridCompInitialize(self%esmComp, phase=phase, &
-         importState=self%importState, exportState=self%exportState, &
+         importState=self%fromJedi, exportState=self%toJedi, &
          clock=self%clock, userRc=urc, rc=rc)
     if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
          line=__LINE__, file=__FILE__)) then
@@ -328,50 +334,47 @@ contains
        return
     endif
 
-    call ESMF_StateGet(self%exportState, itemCount=cnt, rc=rc)
+    !call ESMF_StateGet(self%toJedi, itemCount=cnt, rc=rc)
+    !if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
+    !     line=__LINE__, file=__FILE__)) then
+    !   call ESMF_Finalize(endflag=ESMF_END_ABORT)
+    !   return
+    !endif
+    !write(msg, "(I2)") cnt
+    !call ESMF_LogWrite("After calling advertise toJedi state has "//trim(msg)//" items.", &
+    !     ESMF_LOGMSG_INFO)
+
+    
+    ! Set verbosity flag on connectors
+    
+    call NUOPC_DriverGetComp(self%esmComp, & 
+         compList=connectors, rc=rc)
     if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
          line=__LINE__, file=__FILE__)) then
        call ESMF_Finalize(endflag=ESMF_END_ABORT)
        return
     endif
-    write(msg, "(I2)") cnt
-    call ESMF_LogWrite("After calling advertise export state has "//trim(msg)//" items.", &
-         ESMF_LOGMSG_INFO)
-
     
-
-    ! Set diagnostic flag on connectors
-    
-    ! call NUOPC_DriverGetComp(self%esmComp, & 
-    !      compList=connectors, rc=rc)
-    ! if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
-    !      line=__LINE__, file=__FILE__)) then
-    !    call ESMF_Finalize(endflag=ESMF_END_ABORT)
-    !    return
-    ! endif
-    
-    ! call ESMF_LogWrite("About to set diagnostics", ESMF_LOGMSG_INFO)
-    ! do i=lbound(connectors,1), ubound(connectors,1)
-    !    call ESMF_CplCompGet(connectors(i), name=name, rc=rc)
-    !    if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
-    !         line=__LINE__, file=__FILE__)) then
-    !       call ESMF_Finalize(endflag=ESMF_END_ABORT)
-    !       return
-    !    endif
-    !    call ESMF_LogWrite("Setting Diagnostic on Connector: "//trim(name), &
-    !         ESMF_LOGMSG_INFO)
-    !    call NUOPC_CompAttributeSet(connectors(i), name="Diagnostic", & 
-    !         value="max", rc=rc)
-    !    if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
-    !         line=__LINE__, file=__FILE__)) then
-    !       call ESMF_Finalize(endflag=ESMF_END_ABORT)
-    !       return
-    !    endif
-    ! enddo
-
-    ! deallocate(connectors)
-
-
+    call ESMF_LogWrite("About to set connector verbosity", ESMF_LOGMSG_INFO)
+    do i=lbound(connectors,1), ubound(connectors,1)
+       call ESMF_CplCompGet(connectors(i), name=name, rc=rc)
+       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
+            line=__LINE__, file=__FILE__)) then
+          call ESMF_Finalize(endflag=ESMF_END_ABORT)
+          return
+       endif
+       call NUOPC_CompAttributeSet(connectors(i), name="Verbosity", & 
+            value="max", rc=rc)
+       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
+            line=__LINE__, file=__FILE__)) then
+          call ESMF_Finalize(endflag=ESMF_END_ABORT)
+          return
+       endif
+       call ESMF_LogWrite(" --> Set verbosity on connector: "//trim(name), & 
+            ESMF_LOGMSG_INFO)
+    enddo
+     
+    deallocate(connectors)
 
     ! call ExternalRealize phase
     call NUOPC_CompSearchPhaseMap(self%esmComp, &
@@ -383,7 +386,7 @@ contains
        return
     endif
     call ESMF_GridCompInitialize(self%esmComp, phase=phase, &
-         importState=self%importState, exportState=self%exportState, &
+         importState=self%fromJedi, exportState=self%toJedi, &
          clock=self%clock, userRc=urc, rc=rc)
     if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
          line=__LINE__, &
@@ -397,7 +400,7 @@ contains
        return
     endif
 
-    call ESMF_StateGet(self%exportState, itemCount=cnt, rc=rc)
+    call ESMF_StateGet(self%toJedi, itemCount=cnt, rc=rc)
     if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
          line=__LINE__, file=__FILE__)) then
        call ESMF_Finalize(endflag=ESMF_END_ABORT)
@@ -405,19 +408,19 @@ contains
     endif
     write(msg, "(I2)") cnt
 
-    call ESMF_LogWrite("Dumping export state with "//trim(msg)//" items", & 
+    call ESMF_LogWrite("Dumping toJedi state with "//trim(msg)//" items", & 
          ESMF_LOGMSG_INFO)
 
-    call NUOPC_Write(self%exportState, &
-         fileNamePrefix="diagnostic_postrealize_export_", &
-         timeslice=1, status=ESMF_FILESTATUS_REPLACE, &
-         relaxedFlag=.true., rc=rc)
-    if (ESMF_LogFoundError(rcToCheck=urc, msg=ESMF_LOGERR_PASSTHRU, &
+#if 0
+    call NUOPC_Write(self%toJedi, &
+         fileNamePrefix="diagnostic_postrealize_toJedi_", &
+         overwrite=.true., relaxedFlag=.true., rc=rc)
+    if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
          line=__LINE__, file=__FILE__)) then
        call ESMF_Finalize(endflag=ESMF_END_ABORT)
        return
     endif
-
+#endif
 
     ! call ExternalDataInit phase
     call NUOPC_CompSearchPhaseMap(self%esmComp, &
@@ -429,7 +432,7 @@ contains
        return
     endif
     call ESMF_GridCompInitialize(self%esmComp, phase=phase, &
-         importState=self%importState, exportState=self%exportState, &
+         importState=self%fromJedi, exportState=self%toJedi, &
          clock=self%clock, userRc=urc, rc=rc)
     if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
          line=__LINE__, file=__FILE__)) then
@@ -442,15 +445,16 @@ contains
        return
     endif
 
-    call NUOPC_Write(self%exportState, &
-         fileNamePrefix="diagnostic_postdatainit_export_", &
-         timeslice=1, status=ESMF_FILESTATUS_REPLACE, &
-         relaxedFlag=.true., rc=rc)
-    if (ESMF_LogFoundError(rcToCheck=urc, msg=ESMF_LOGERR_PASSTHRU, &
+#if 0
+    call NUOPC_Write(self%toJedi, &
+         fileNamePrefix="diagnostic_postdatainit_toJedi_", &
+         overwrite=.true., relaxedFlag=.true., rc=rc)
+    if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
          line=__LINE__, file=__FILE__)) then
        call ESMF_Finalize(endflag=ESMF_END_ABORT)
        return
     endif
+#endif
 
     call ESMF_LogWrite("Exit "//subname, ESMF_LOGMSG_INFO)
     
@@ -495,14 +499,16 @@ contains
        return
     endif
 
-    call SetTimeFromString(strStartTime, startTime, rc=rc)
+    !call SetTimeFromString(strStartTime, startTime, rc=rc)
+    call ESMF_TimeSet(startTime, timeString=strStartTime, rc=rc)
     if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
          line=__LINE__, file=__FILE__)) then
        call ESMF_Finalize(endflag=ESMF_END_ABORT)
        return
     endif
 
-    call SetTimeFromString(strStopTime, stopTime, rc=rc)
+!    call SetTimeFromString(strStopTime, stopTime, rc=rc)
+    call ESMF_TimeSet(stopTime, timeString=strStopTime, rc=rc)
     if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
          line=__LINE__, file=__FILE__)) then
        call ESMF_Finalize(endflag=ESMF_END_ABORT)
@@ -519,10 +525,9 @@ contains
        return
     endif
   
-
     ! step the model forward
     call ESMF_GridCompRun(self%esmComp, &
-         importState=self%importState, exportState=self%exportState, &
+         importState=self%fromJedi, exportState=self%toJedi, &
          clock=self%clock, userRc=urc, rc=rc)
     if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
          line=__LINE__, file=__FILE__)) then
@@ -535,60 +540,6 @@ contains
        return
     endif
 
-
-
-#if 0
-
-    self%mype = mpp_pe()
-    rc = ESMF_SUCCESS
-    !Convert JEDI state to model state
-    !call state_to_nems( state, self )
-
-    !Convert datetimes
-    call datetime_to_string(vdate_start, vdatec1)
-    call datetime_to_string(vdate_final, vdatec2)
-    
-    call esmf_logwrite("starting step", esmf_LOGMSG_INFO, rc=rc)
-    !Reset the GridComp clock for this advance step
-    call construct_clock(vdatec1, vdatec2, clock=self%clock)
-    !call ESMF_VMEpochEnter(epoch=ESMF_VMEPOCH_BUFFER, rc=rc)
-    !esmf_err_abort(rc)
-    ! timestamp the data going into the ESM or else NUOPC will flag incompatible
-    call NUOPC_SetTimestamp(self%importState, self%clock, rc=rc)
-    esmf_err_abort(rc)
-    
-    ! Step the ESM forward from vdate1 -> vdate2
-    call ESMF_GridCompRun(self%esmComp, &
-         importState=self%importState, exportState=self%exportState, &
-         clock=self%clock, userRc=urc, rc=rc)
-    esmf_err_abort(rc)
-    esmf_err_abort(urc)
-    !call ESMF_VMCommWaitAll(self%vm, rc=rc)
-    !esmf_err_abort(rc)
-    !call ESMF_VMEpochExit(rc=rc)
-    !esmf_err_abort(rc)
-    
-#if 0
-    ! for testing, write out the fields in the exportState to file
-    !TODO: only works for 2D surface fields
-    write(fileName, '("fields_in_esm_export_step",I2.2,".nc")') tstep
-    call FV3_StateWrite(self%exportState, fileName=trim(fileName), rc=rc)
-    esmf_err_abort(rc)
-    
-    ! for testing, write out the fields in the importState to file
-    !TODO: only works for 2D surface fields
-    write(fileName, '("fields_in_esm_import_step",I2.2,".nc")') tstep
-    call FV3_StateWrite(self%importState, fileName=trim(fileName), rc=rc)
-    esmf_err_abort(rc)
-#endif
-    
-    tstep = tstep+1
-    
-    !Convert model state to JEDI state
-    call nems_to_state( self, state )
-    !
-
-#endif
     call ESMF_LogWrite("Exit "//subname, ESMF_LOGMSG_INFO)
   end subroutine step
   
@@ -607,8 +558,8 @@ contains
     call ESMF_LogWrite("Enter "//subname, ESMF_LOGMSG_INFO)
 
     call ESMF_GridCompFinalize(gridcomp=self%esmComp, &
-         importstate=self%importState, & 
-         exportstate=self%exportState, & 
+         importstate=self%fromJedi, & 
+         exportstate=self%toJedi, & 
          clock=self%clock, userrc=urc, rc=rc) 
     if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
          line=__LINE__, file=__FILE__)) then
@@ -625,28 +576,28 @@ contains
 
   end subroutine finalize
   
-  subroutine SetTimeFromString(cdate, time, rc)
+  ! subroutine SetTimeFromString(cdate, time, rc)
 
-    implicit none
-    character(len=20),  intent(in)  :: cdate
-    type(ESMF_Time),    intent(out) :: time
-    integer,            intent(out) :: rc
+  !   implicit none
+  !   character(len=20),  intent(in)  :: cdate
+  !   type(ESMF_Time),    intent(out) :: time
+  !   integer,            intent(out) :: rc
     
-    integer :: yy,mm,dd,hh,mn
+  !   integer :: yy,mm,dd,hh,mn
     
-    !Convert character dates to integers
-    read(cdate(1:4),'(i4)') yy
-    read(cdate(6:7),'(i2)') mm
-    read(cdate(9:10),'(i2)') dd
-    read(cdate(12:13),'(i2)') hh
-    read(cdate(15:16),'(i2)') mn
+  !   !Convert character dates to integers
+  !   read(cdate(1:4),'(i4)') yy
+  !   read(cdate(6:7),'(i2)') mm
+  !   read(cdate(9:10),'(i2)') dd
+  !   read(cdate(12:13),'(i2)') hh
+  !   read(cdate(15:16),'(i2)') mn
     
-    call ESMF_TimeSet(time, yy=yy, mm=mm, & 
-         dd=dd, h=hh, m=mn, calkindflag=ESMF_CALKIND_GREGORIAN, rc=rc)
-    if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
-         line=__LINE__, file=__FILE__)) &
-         return
+  !   call ESMF_TimeSet(time, yy=yy, mm=mm, & 
+  !        dd=dd, h=hh, m=mn, calkindflag=ESMF_CALKIND_GREGORIAN, rc=rc)
+  !   if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
+  !        line=__LINE__, file=__FILE__)) &
+  !        return
     
-  end subroutine SetTimeFromString
+  ! end subroutine SetTimeFromString
   
 end module fv3jedi_ufs_mod
